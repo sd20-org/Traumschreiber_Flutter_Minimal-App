@@ -9,6 +9,23 @@ copied from: if you want your own app for the Traumschreiber, start here.**
 |:---:|:---:|:---:|:---:|:---:|
 | ![Device page](images/device.png) | ![LED, start sound, button presses](images/device_led_sound.png) | ![Live EEG](images/signal.png) | ![Spectrogram](images/spectrogram.png) | ![Sleep stages](images/sleep.png) |
 
+## Install the app (Android)
+
+No programming needed:
+
+1. On your Android phone (Android 7 or newer), open the
+   [latest release](https://github.com/sd20-org/Traumschreiber_Flutter_Minimal-App/releases/latest)
+   and download **`traumschreiber-minimal.apk`**.
+2. Open the downloaded file. Android asks whether your browser or file manager may install
+   apps; allow it once for this app ("Install unknown apps").
+3. Tap **Install**. If Google Play Protect warns that it does not know the app, choose
+   **Install anyway**: the app is not in the Play Store, so Play Protect has not seen it.
+4. Switch the Traumschreiber on, open the app, tap **Connect** and allow access to nearby
+   devices.
+
+The sleep model is built into the APK, so the app works without internet. For a newer
+version, download the APK again and install it over the old one; your recordings stay.
+
 ## What the app does
 
 | Page | What you see and can do |
@@ -30,7 +47,7 @@ card, use the companion repository
 > The Traumschreiber is **not a medical device**, and neither is this app. It is meant for
 > education, research and self-observation, not for diagnosing anything.
 
-## Try it
+## Build it yourself
 
 **You need**
 
