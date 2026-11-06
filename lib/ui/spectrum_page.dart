@@ -73,7 +73,7 @@ class _SpectrumPageState extends State<SpectrumPage> {
   @override
   Widget build(BuildContext context) {
     final app = widget.app;
-    if (!app.device.isConnected) return NotConnected(onConnect: app.connect);
+    if (!app.device.isActive) return NotConnected(onConnect: app.connect);
     _update(app);
     final recent = welch(app.raw[app.channel].last(8 * kSampleRateHz), kSampleRateHz.toDouble());
     final bandPower = [for (final b in _bands) recent.band(b.$2, b.$3) * (b.$3 - b.$2)];

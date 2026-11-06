@@ -24,7 +24,7 @@ class _SignalPageState extends State<SignalPage> {
   @override
   Widget build(BuildContext context) {
     final app = widget.app;
-    if (!app.device.isConnected) return NotConnected(onConnect: app.connect);
+    if (!app.device.isActive) return NotConnected(onConnect: app.connect);
     final buffer = (_filtered ? app.filtered : app.raw)[app.channel];
     var y = buffer.last(_seconds * kSampleRateHz);
     if (!_filtered && y.isNotEmpty) {

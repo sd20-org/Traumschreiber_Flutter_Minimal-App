@@ -40,7 +40,25 @@ Streaming starts as soon as the device is connected; recording to a file is a se
 A recording is a CSV file with all eight channels in microvolts. The sleep stages and button
 presses of that time are saved in two small files next to it.
 
-The whole app is about 2,000 lines of Dart. For whole nights recorded on the device's microSD
+### A whole night
+
+The app records through the night with the screen off:
+
+- **Screen off or another app in front:** while connected, a notification shows that the app
+  is running, and Android leaves it alone. Before the first recording the app asks to be
+  exempted from battery optimisation; allow it. Do not swipe the app away in the list of recent
+  apps, that ends it.
+- **Connection lost:** the app connects again by itself, every few seconds, for as long as it
+  takes. The recording keeps going.
+- **Gaps:** samples that did not arrive over Bluetooth are fetched back from the device's microSD
+  card once they are a minute old, while the live stream continues. The Device page shows how
+  much was fetched back and how much is still to come. When you tap Stop, the app first fetches
+  what is still missing; tap again to save at once. Without a microSD card in the device, gaps
+  stay gaps.
+- **Device switched off and on:** its sample counter starts again from zero. The app saves the
+  recording and starts a new one.
+
+The whole app is about 3,000 lines of Dart. For whole nights recorded on the device's microSD
 card, use the companion repository
 [Traumschreiber_Python_Offline-Data-Analysis](https://github.com/sd20-org/Traumschreiber_Python_Offline-Data-Analysis).
 
@@ -86,7 +104,7 @@ iOS should work as well but has not been tested.
 | "No Traumschreiber found" | Switch the device on and keep it close. It connects to one phone at a time: close other apps that may be connected to it, such as the sd20 app. |
 | The signal is a flat line or jumps wildly | Check that the electrodes touch the skin. A large offset right after putting them on settles within a minute. |
 | "Model download failed" | The phone needs internet once for the sleep model, or bundle it with `tool/fetch_model.sh`. |
-| Samples lost | Keep the phone within a few metres; walls and bodies weaken Bluetooth. |
+| Samples lost, or gaps that stay | Keep the phone within a few metres; walls and bodies weaken Bluetooth. Gaps are fetched back only with a microSD card in the device. |
 
 ## How the code works
 
@@ -94,7 +112,9 @@ Read it in this order; each file starts with a short explanation.
 
 ```
 lib/
-├── traumschreiber/traumschreiber.dart   Bluetooth: find, connect, start the stream, decode packets
+├── traumschreiber/traumschreiber.dart   Bluetooth: find, connect, reconnect, decode packets
+├── traumschreiber/backfill.dart         fetch lost samples back from the SD card
+├── background.dart                      keep running with the screen off
 ├── app_state.dart                       hands every block of samples to plot, spectrum, sleep, recorder
 ├── analysis/
 │   ├── spectrum.dart                    power spectrum (Welch) with a small FFT
@@ -121,6 +141,7 @@ Traumschreiber ──Bluetooth──▶ traumschreiber.dart ──samples──�
 | ↳ Data (notify) | `0483dddb-…` | sample packets, see below |
 | ↳ Control (write) | `0483dddc-…` | `0x01` start streaming, `0x02` stop |
 | ↳ Status (read) | `0483dddd-…` | streamed channels, gain, sample counter |
+| ↳ Backfill (notify) | `0483ddde-…` | samples fetched back from the SD card, see below |
 | Battery service | `0x180F` / level `0x2A19` | one byte, percent |
 | LED/button service | `00001523-1212-efde-1523-785feabcd123` | |
 | ↳ Button (notify) | `00001524-…` | `1` pressed, `0` released |
@@ -144,6 +165,13 @@ read the status, subscribe to the Data characteristic, then write `0x01`.
 To microvolts: `µV = value × 1.2e6 / gain / 2^23`. The sample rate is 250 Hz.
 A packet with only the byte `0xC0` is a keep-alive. A gap in the sample numbers means
 samples were lost in transmission (the device still has them on its SD card).
+
+**Backfill:** write `[0x20, first, last]` to Control (both uint32 little endian, inclusive).
+The device answers on the Backfill characteristic with `0xBF` packets (same layout as a data
+packet), then `0xBE` when done; bytes 9–12 of `0xBE` say how many samples it found on its card.
+`0xBD` means cancelled or an SD error. Ask for at most a few thousand samples at a time and only
+for samples at least a minute old; [`backfill.dart`](lib/traumschreiber/backfill.dart) explains
+why.
 
 All of this is in [`decodePacket`](lib/traumschreiber/traumschreiber.dart) and
 [`DeviceStatus.parse`](lib/traumschreiber/traumschreiber.dart), both covered by tests
@@ -173,7 +201,9 @@ sample_number,time_s,ch0,ch1,ch2,ch3,ch4,ch5,ch6,ch7
 ```
 
 Values are raw, not filtered. `time_s` comes from the sample number, so it is exact even if
-packets arrive late. Next to it, `…_stages.csv` holds one line per 30-second epoch (stage and
+packets arrive late. Samples fetched back from the SD card are sorted in when the recording is
+saved; a jump in `sample_number` that remains marks samples that could not be fetched back.
+Next to it, `…_stages.csv` holds one line per 30-second epoch (stage and
 the five probabilities) and `…_button.csv` the time of every button press.
 
 Open a recording in Python:
@@ -187,9 +217,8 @@ eeg.plot(x="time_s", y="ch0")
 ## Ideas for your own version
 
 - Several devices at once: `_scan()` takes the first one it finds; collect them in a list instead.
-- Reconnect automatically after the link drops, and fill the gap from the SD card (the
-  sd20 app does both).
-- Record in the background with the screen off (needs an Android foreground service).
+- Keep recording when the app is swiped away: run the Bluetooth part in its own process or
+  in the foreground service's isolate (the sd20 app does this).
 - Other analyses: eye movements, alpha with eyes closed, heart rate from a chest channel.
 
 ## Licence

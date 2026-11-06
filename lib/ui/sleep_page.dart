@@ -11,7 +11,7 @@ class SleepPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!app.device.isConnected) return NotConnected(onConnect: app.connect);
+    if (!app.device.isActive) return NotConnected(onConnect: app.connect);
     final st = app.stager;
     final text = Theme.of(context).textTheme;
     final current = st.hypnogram.isEmpty ? null : st.hypnogram.last;

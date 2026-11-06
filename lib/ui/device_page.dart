@@ -12,13 +12,16 @@ class DevicePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final d = app.device;
-    final busy = d.phase == ConnectionPhase.scanning || d.phase == ConnectionPhase.connecting;
+    final busy = d.phase == ConnectionPhase.scanning ||
+        d.phase == ConnectionPhase.connecting ||
+        d.phase == ConnectionPhase.reconnecting;
     final text = Theme.of(context).textTheme;
     final (label, color) = switch (d.phase) {
       ConnectionPhase.disconnected => ('Not connected', Colors.white38),
       ConnectionPhase.scanning => ('Searching…', kAccent),
       ConnectionPhase.connecting => ('Connecting…', kAccent),
       ConnectionPhase.connected => ('Streaming', kSignal),
+      ConnectionPhase.reconnecting => ('Reconnecting…', kAccent),
     };
     final lostPct = app.samplesReceived == 0
         ? 0.0
@@ -45,11 +48,11 @@ class DevicePage extends StatelessWidget {
                       size: 44, color: color),
             ),
             const SizedBox(height: 16),
-            Text(d.isConnected ? (d.deviceName ?? 'Traumschreiber') : 'Traumschreiber',
+            Text(d.isActive ? (d.deviceName ?? 'Traumschreiber') : 'Traumschreiber',
                 style: text.headlineSmall),
             const SizedBox(height: 4),
             Text(label, style: text.bodyMedium?.copyWith(color: color)),
-            if (d.error != null) ...[
+            if (d.error != null && d.phase != ConnectionPhase.reconnecting) ...[
               const SizedBox(height: 12),
               Text(d.error!,
                   textAlign: TextAlign.center,
@@ -59,7 +62,7 @@ class DevicePage extends StatelessWidget {
             SizedBox(
               width: double.infinity,
               height: 52,
-              child: d.isConnected
+              child: d.isActive
                   ? OutlinedButton.icon(
                       onPressed: app.disconnect,
                       icon: const Icon(Icons.link_off_rounded),
@@ -73,7 +76,7 @@ class DevicePage extends StatelessWidget {
         ),
       ),
       const SizedBox(height: 12),
-      if (d.isConnected)
+      if (d.isActive)
         Section(
           title: 'Device',
           child: Column(children: [
@@ -81,9 +84,14 @@ class DevicePage extends StatelessWidget {
             _row('Channels streamed', d.status.channels.join(', ')),
             _row('Amplifier gain', '×${d.status.gains.toSet().join(' / ×')}'),
             _row('Samples received', '${app.samplesReceived}'),
-            _row('Samples lost', '${app.samplesLost} (${lostPct.toStringAsFixed(2)} %)'),
+            _row('Lost on the radio link', '${app.samplesLost} (${lostPct.toStringAsFixed(2)} %)'),
+            if (d.reconnects > 0) _row('Reconnected', '${d.reconnects}×'),
           ]),
         ),
+      if (app.recorder.isRecording) ...[
+        const SizedBox(height: 12),
+        _Backfill(app: app),
+      ],
       if (d.isConnected) ...[
         const SizedBox(height: 12),
         _LedAndSound(device: d),
@@ -103,14 +111,39 @@ class DevicePage extends StatelessWidget {
     ]);
   }
 
-  Widget _row(String k, String v) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Row(children: [
-          Text(k, style: const TextStyle(color: Colors.white60)),
-          const Spacer(),
-          Text(v, style: const TextStyle(fontWeight: FontWeight.w600)),
-        ]),
-      );
+}
+
+/// Progress of fetching lost samples back from the SD card.
+class _Backfill extends StatelessWidget {
+  final AppState app;
+  const _Backfill({required this.app});
+
+  static String _duration(int samples) {
+    final s = samples ~/ kSampleRateHz;
+    if (s < 60) return '$s s';
+    if (s < 3600) return '${s ~/ 60} min ${s % 60} s';
+    return '${s ~/ 3600} h ${s ~/ 60 % 60} min';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final b = app.backfill;
+    return Section(
+      title: 'Gaps in this recording',
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        _row('Fetched back from the SD card', _duration(b.recovered)),
+        _row('Still to fetch', _duration(b.pending)),
+        _row('Missing for good', _duration(b.missing)),
+        const SizedBox(height: 8),
+        const Text(
+          'Samples that do not arrive over Bluetooth are fetched from the '
+          "device's microSD card once they are a minute old. Without a card "
+          'they stay missing.',
+          style: TextStyle(fontSize: 13, height: 1.4, color: Colors.white54),
+        ),
+      ]),
+    );
+  }
 }
 
 /// RGB LED colour with brightness, and the start sound.
@@ -234,3 +267,13 @@ class _ButtonPresses extends StatelessWidget {
               ]),
       );
 }
+
+Widget _row(String k, String v) => Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(children: [
+        Text(k, style: const TextStyle(color: Colors.white60)),
+        const Spacer(),
+        Text(v, style: const TextStyle(fontWeight: FontWeight.w600)),
+      ]),
+    );
+

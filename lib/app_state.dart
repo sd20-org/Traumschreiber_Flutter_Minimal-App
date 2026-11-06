@@ -1,6 +1,11 @@
 // The app's single piece of state. It listens to the device and hands every
 // block of samples to the four consumers: live plot, spectrum, sleep staging
 // and recorder. The pages only read from here and call its methods.
+//
+// For a whole night it also keeps the recording going when the link drops:
+// the device reconnects by itself (traumschreiber.dart), the gaps are
+// fetched back from the SD card (backfill.dart), and a foreground service
+// keeps the app running with the screen off (background.dart).
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
@@ -8,7 +13,9 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 
 import 'analysis/sleep_staging.dart';
+import 'background.dart';
 import 'recording/recorder.dart';
+import 'traumschreiber/backfill.dart';
 import 'traumschreiber/traumschreiber.dart';
 
 class AppState extends ChangeNotifier {
@@ -17,6 +24,8 @@ class AppState extends ChangeNotifier {
   final device = Traumschreiber();
   final recorder = Recorder();
   final stager = SleepStager();
+  late final backfill =
+      Backfill(request: device.requestBackfill, onRecovered: recorder.writeRecovered);
 
   /// Last 60 s per channel: raw (for the spectrogram) and filtered
   /// 0.5–35 Hz + 50 Hz notch (for the live plot).
@@ -27,40 +36,115 @@ class AppState extends ChangeNotifier {
   int channel = 0; // shown in the live plot and the spectrum
   int sleepChannel = 0; // scored by the sleep model
   int samplesReceived = 0;
+
+  /// Samples that did not arrive over Bluetooth (gaps in the live stream).
+  /// While recording, [backfill] fetches them back from the SD card.
   int samplesLost = 0;
   int? _lastSampleNumber;
-  StreamSubscription<SampleBlock>? _sub;
+
+  /// Stop was tapped, but gaps are still being fetched back. Live samples
+  /// are no longer written; the file is saved when the gaps are done.
+  bool finishing = false;
+  bool _saving = false;
+
+  final _subs = <StreamSubscription>[];
+  Timer? _timer;
+  ConnectionPhase _phase = ConnectionPhase.disconnected;
 
   AppState() {
+    Background.init();
     device.addListener(_onDeviceChanged);
     stager.addListener(notifyListeners);
-    _sub = device.samples.listen(_onSamples);
+    _subs.add(device.samples.listen(_onSamples));
+    _subs.add(device.backfill.listen((e) => backfill.onEvent(e, DateTime.now())));
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) => _everySecond());
   }
 
   void _onDeviceChanged() {
     if (device.isConnected && samplesReceived == 0) {
       stager.loadModel(); // fetch the model while the first epoch fills
     }
-    if (!device.isConnected && recorder.isRecording) stopRecording();
+    if (device.phase != _phase) {
+      _phase = device.phase;
+      if (_phase == ConnectionPhase.reconnecting) backfill.onLinkLost();
+      // Disconnected on purpose: nothing more can be fetched, save now.
+      if (!device.isActive && _phase != ConnectionPhase.connecting &&
+          _phase != ConnectionPhase.scanning) {
+        if (recorder.isRecording) _save();
+        Background.stop();
+      } else {
+        Background.update(_statusText());
+      }
+    }
     notifyListeners();
   }
 
+  void _everySecond() {
+    backfill.tick(DateTime.now(),
+        linkReadySince: device.isConnected ? device.connectedSince : null,
+        head: _lastSampleNumber);
+    if (finishing && backfill.idle) _save();
+    if (recorder.isRecording) {
+      if (DateTime.now().second == 0) Background.update(_statusText());
+      notifyListeners(); // recording time, backfill progress
+    }
+  }
+
+  String _statusText() {
+    if (device.phase == ConnectionPhase.reconnecting) {
+      return 'Connection lost, reconnecting…';
+    }
+    if (!recorder.isRecording) return 'Connected';
+    final e = recorder.elapsed;
+    return 'Recording for ${e.inHours} h ${e.inMinutes % 60} min';
+  }
+
   void _onSamples(SampleBlock block) {
+    final numbers = <int>[];
+    final values = <List<double>>[];
     for (var i = 0; i < block.length; i++) {
       final n = block.sampleNumbers[i];
       final last = _lastSampleNumber;
-      if (last != null && n > last + 1) samplesLost += n - last - 1;
+      if (last != null && n + 10 * kSampleRateHz < last) {
+        _deviceRestarted();
+      } else if (last != null && n <= last) {
+        continue; // arrived twice, or an old packet after a reconnect
+      } else if (last != null && n > last + 1) {
+        samplesLost += n - last - 1;
+        if (recorder.isRecording && !finishing) backfill.addGap(last + 1, n - 1);
+      }
       _lastSampleNumber = n;
+      numbers.add(n);
+      values.add(block.microvolts[i]);
       final uv = block.microvolts[i];
       for (var ch = 0; ch < kChannels; ch++) {
         raw[ch].add(uv[ch]);
         filtered[ch].add(_filters[ch].apply(uv[ch]));
       }
     }
-    samplesReceived += block.length;
-    stager.add(block.microvolts.map((s) => s[sleepChannel]));
-    recorder.write(block);
+    if (numbers.isEmpty) return;
+    samplesReceived += numbers.length;
+    stager.add(values.map((s) => s[sleepChannel]));
+    if (!finishing) recorder.write(SampleBlock(numbers, values));
     notifyListeners();
+  }
+
+  /// The sample counter started again from zero: the device was switched
+  /// off and on. Samples from before cannot be asked for by number any
+  /// more, so the recording is saved and a new one begins.
+  void _deviceRestarted() {
+    _lastSampleNumber = null;
+    for (final f in _filters) {
+      f.reset();
+    }
+    if (recorder.isRecording) {
+      backfill.missing += backfill.pending;
+      backfill.clear();
+      final wasFinishing = finishing;
+      _save().then((_) {
+        if (!wasFinishing && device.isActive) startRecording();
+      });
+    }
   }
 
   Future<void> connect() async {
@@ -74,6 +158,7 @@ class AppState extends ChangeNotifier {
       f.reset();
     }
     stager.reset();
+    await Background.start('Connecting…');
     await device.connect();
   }
 
@@ -92,13 +177,36 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> startRecording() async {
+    await Background.askToIgnoreBatteryOptimization();
+    backfill.clear();
+    backfill.recovered = backfill.missing = 0;
     await recorder.start(device.deviceName ?? 'Traumschreiber');
+    Background.update(_statusText());
     notifyListeners();
   }
 
-  /// Stops the recording and stores what happened meanwhile next to it:
-  /// sleep stages (…_stages.csv) and button presses (…_button.csv).
+  /// Stops the recording. If gaps are still waiting to be fetched from the
+  /// SD card, it first waits for them ([finishing]); [saveNow] skips that.
   Future<void> stopRecording() async {
+    if (!backfill.idle && device.isActive) {
+      finishing = true;
+      notifyListeners();
+      return;
+    }
+    await _save();
+  }
+
+  Future<void> saveNow() => _save();
+
+  /// Saves the file, and next to it what happened meanwhile: sleep stages
+  /// (…_stages.csv) and button presses (…_button.csv).
+  Future<void> _save() async {
+    if (_saving || !recorder.isRecording) return;
+    _saving = true;
+    finishing = false;
+    backfill.missing += backfill.pending;
+    backfill.clear();
+    notifyListeners();
     final started = recorder.startedAt;
     final file = await recorder.stop();
     if (file != null && started != null) {
@@ -115,12 +223,20 @@ class AppState extends ChangeNotifier {
             'button_pressed_at\n${presses.map((t) => t.toIso8601String()).join('\n')}\n');
       }
     }
+    _saving = false;
+    Background.update(_statusText());
     notifyListeners();
   }
 
+  bool get saving => _saving;
+
   @override
   void dispose() {
-    _sub?.cancel();
+    _timer?.cancel();
+    for (final s in _subs) {
+      s.cancel();
+    }
+    Background.stop();
     device.dispose();
     stager.dispose();
     super.dispose();

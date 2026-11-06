@@ -10,6 +10,7 @@
 import 'package:flutter/material.dart';
 
 import 'app_state.dart';
+import 'traumschreiber/traumschreiber.dart';
 import 'ui/device_page.dart';
 import 'ui/recordings_page.dart';
 import 'ui/signal_page.dart';
@@ -74,8 +75,9 @@ class _HomeScreenState extends State<HomeScreen> {
               _ => RecordingsPage(app: app),
             },
           ),
-          floatingActionButton:
-              _page == 0 && app.device.isConnected ? _RecordButton(app: app) : null,
+          floatingActionButton: _page == 0 && (app.device.isActive || app.recorder.isRecording)
+              ? _RecordButton(app: app)
+              : null,
           bottomNavigationBar: NavigationBar(
             selectedIndex: _page,
             onDestinationSelected: (i) => setState(() => _page = i),
@@ -88,7 +90,8 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 /// Starts and stops saving to CSV. Recording is separate from connecting:
-/// the stream runs as soon as the device is connected.
+/// the stream runs as soon as the device is connected. After Stop, gaps may
+/// still be fetched from the SD card; tapping again saves without them.
 class _RecordButton extends StatelessWidget {
   final AppState app;
   const _RecordButton({required this.app});
@@ -96,6 +99,25 @@ class _RecordButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final r = app.recorder;
+    if (app.saving) {
+      return const FloatingActionButton.extended(
+        onPressed: null,
+        backgroundColor: kSurface,
+        icon: SizedBox.square(
+            dimension: 18, child: CircularProgressIndicator(strokeWidth: 2)),
+        label: Text('Saving…'),
+      );
+    }
+    if (app.finishing) {
+      final s = app.backfill.pending ~/ kSampleRateHz;
+      return FloatingActionButton.extended(
+        onPressed: app.saveNow,
+        backgroundColor: kSurface,
+        foregroundColor: kAccent,
+        icon: const Icon(Icons.downloading_rounded),
+        label: Text('Fetching ${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')} · save now'),
+      );
+    }
     if (!r.isRecording) {
       return FloatingActionButton.extended(
         onPressed: app.startRecording,
@@ -126,6 +148,13 @@ class _StatusPill extends StatelessWidget {
   Widget build(BuildContext context) {
     final d = app.device;
     final on = d.isConnected;
+    if (d.phase == ConnectionPhase.reconnecting) {
+      return const Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(Icons.sync_rounded, size: 14, color: kAccent),
+        SizedBox(width: 4),
+        Text('reconnecting', style: TextStyle(fontSize: 12, color: kAccent)),
+      ]);
+    }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
