@@ -18,9 +18,9 @@
 // both files are merged by sample number. Both are already sorted, so the
 // merge reads them line by line and needs almost no memory.
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
+import 'dart:typed_data';
 
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -173,41 +173,104 @@ class Recorder {
 
 /// Merges [extraPath] (data lines only) into the recording at [mainPath]
 /// (comment and header lines, then data lines). Both must be sorted by
-/// sample number, the first column.
+/// sample number, the first column. Lines are compared and copied as bytes,
+/// in large blocks: a night has millions of lines, and decoding each one to
+/// a string took a quarter of an hour on a slow phone.
 Future<void> mergeCsv(String mainPath, String extraPath) async {
-  Stream<String> lines(String p) =>
-      File(p).openRead().transform(utf8.decoder).transform(const LineSplitter());
-  // A recording cut off mid-write can end in half a line: skip such lines.
-  int? number(String line) {
-    final comma = line.indexOf(',');
-    return comma < 0 ? null : int.tryParse(line.substring(0, comma));
-  }
-
-  final a = StreamIterator(lines(mainPath));
-  final b = StreamIterator(lines(extraPath));
+  final a = _LineReader(mainPath), b = _LineReader(extraPath);
   final tmp = File('$mainPath.merging');
-  final out = tmp.openWrite();
-  var hasA = await a.moveNext(), hasB = await b.moveNext();
+  final out = _BlockWriter(tmp.openSync(mode: FileMode.write));
+  var lineA = a.next(), lineB = b.next();
   // Copy the header: comment lines and the column names.
-  while (hasA && !a.current.startsWith(RegExp(r'[0-9]'))) {
-    out.writeln(a.current);
-    hasA = await a.moveNext();
+  while (lineA != null && _number(lineA) == null && !_isDigit(lineA)) {
+    out.add(lineA);
+    lineA = a.next();
   }
-  while (hasA || hasB) {
-    if (hasA && number(a.current) == null) {
-      hasA = await a.moveNext();
-    } else if (hasB && number(b.current) == null) {
-      hasB = await b.moveNext();
-    } else if (hasB && (!hasA || number(b.current)! < number(a.current)!)) {
-      out.writeln(b.current);
-      hasB = await b.moveNext();
-    } else if (hasB && number(b.current) == number(a.current)) {
-      hasB = await b.moveNext(); // arrived both ways: keep the live one
+  while (lineA != null || lineB != null) {
+    final na = lineA == null ? null : _number(lineA);
+    final nb = lineB == null ? null : _number(lineB);
+    if (lineA != null && na == null) {
+      lineA = a.next(); // half a line from a recording that was cut off
+    } else if (lineB != null && nb == null) {
+      lineB = b.next();
+    } else if (nb != null && (na == null || nb < na)) {
+      out.add(lineB!);
+      lineB = b.next();
+    } else if (nb != null && nb == na) {
+      lineB = b.next(); // arrived both ways: keep the live one
     } else {
-      out.writeln(a.current);
-      hasA = await a.moveNext();
+      out.add(lineA!);
+      lineA = a.next();
     }
   }
-  await out.close();
-  await tmp.rename(mainPath);
+  out.close();
+  a.close();
+  b.close();
+  tmp.renameSync(mainPath);
+}
+
+bool _isDigit(List<int> line) => line.isNotEmpty && line[0] >= 48 && line[0] <= 57;
+
+/// Sample number at the start of a data line, null if the line has none.
+int? _number(Uint8List line) {
+  var n = 0, i = 0;
+  while (i < line.length && line[i] >= 48 && line[i] <= 57) {
+    n = n * 10 + line[i] - 48;
+    i++;
+  }
+  return i > 0 && i < line.length && line[i] == 44 ? n : null; // 44 = ','
+}
+
+/// Reads a file line by line (without the newline), one large block at a
+/// time.
+class _LineReader {
+  final RandomAccessFile _file;
+  Uint8List _buf = Uint8List(0);
+  int _pos = 0;
+  bool _eof = false;
+  _LineReader(String path) : _file = File(path).openSync();
+
+  Uint8List? next() {
+    while (true) {
+      final nl = _buf.indexOf(10, _pos);
+      if (nl >= 0) {
+        final line = Uint8List.sublistView(_buf, _pos, nl);
+        _pos = nl + 1;
+        return line;
+      }
+      if (_eof) {
+        if (_pos >= _buf.length) return null;
+        final line = Uint8List.sublistView(_buf, _pos);
+        _pos = _buf.length;
+        return line;
+      }
+      final block = _file.readSync(1 << 20);
+      if (block.isEmpty) _eof = true;
+      final rest = _buf.length - _pos;
+      _buf = Uint8List(rest + block.length)
+        ..setRange(0, rest, _buf, _pos)
+        ..setRange(rest, rest + block.length, block);
+      _pos = 0;
+    }
+  }
+
+  void close() => _file.closeSync();
+}
+
+class _BlockWriter {
+  final RandomAccessFile _file;
+  final _buf = BytesBuilder(copy: true);
+  _BlockWriter(this._file);
+
+  void add(Uint8List line) {
+    _buf
+      ..add(line)
+      ..addByte(10);
+    if (_buf.length >= 1 << 20) _file.writeFromSync(_buf.takeBytes());
+  }
+
+  void close() {
+    _file.writeFromSync(_buf.takeBytes());
+    _file.closeSync();
+  }
 }
