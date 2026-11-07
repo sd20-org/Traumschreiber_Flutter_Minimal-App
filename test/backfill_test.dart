@@ -107,4 +107,15 @@ void main() {
         '# header\nsample_number,time_s\n1,a\n2,a\n3,b\n4,b\n5,a\n6,a\n7,b\n');
     await dir.delete(recursive: true);
   });
+
+  test('a recording cut off mid-line still merges', () async {
+    final dir = await Directory.systemTemp.createTemp('ts_merge');
+    final main = File('${dir.path}/r.csv')
+      ..writeAsStringSync('# header\nsample_number,time_s\n1,a\n2,a\n5,a\n6');
+    final extra = File('${dir.path}/r.csv.backfill')..writeAsStringSync('3,b\n4,b\n');
+    await mergeCsv(main.path, extra.path);
+    expect(main.readAsStringSync(),
+        '# header\nsample_number,time_s\n1,a\n2,a\n3,b\n4,b\n5,a\n');
+    await dir.delete(recursive: true);
+  });
 }

@@ -31,9 +31,9 @@ version, download the APK again and install it over the old one; your recordings
 | Page | What you see and can do |
 |---|---|
 | **Device** | Connect and disconnect, battery level, how many samples arrived or were lost. Set the colour of the device's LED, play its start sound, and see every press of its button with date and time. **Record** starts and stops saving to a file. |
-| **Signal** | One of the eight EEG channels in real time, filtered 0.5–35 Hz with a 50 Hz notch, over the last 5, 10 or 30 seconds. |
-| **Spectrum** | Spectrogram of the last 60 seconds from 0 to 60 Hz (one column per second, smoothed with a 5-second median), and how the power splits into the delta, theta, alpha, sigma and beta bands. |
-| **Sleep** | The current sleep stage, the hypnogram and the hypnodensity (how sure the model is about each stage), scored every 30 seconds by the open-source model [AnySleep](https://github.com/dslaborg/AnySleep). |
+| **Signal** | One of the EEG channels in real time (CH2 unless you pick another), filtered 0.5–35 Hz with a 50 Hz notch, over the last 5, 10 or 30 seconds. |
+| **Spectrum** | Spectrogram of the last 60 seconds of the same channel from 0 to 60 Hz (one column per second, smoothed with a 5-second median), and how the power splits into the delta, theta, alpha, sigma and beta bands. |
+| **Sleep** | The current sleep stage, the hypnogram and the hypnodensity (how sure the model is about each stage), scored every 30 seconds from CH2 (or the channel you pick) by the open-source model [AnySleep](https://github.com/dslaborg/AnySleep). |
 | **Recordings** | Your saved recordings. Share them (e-mail, cloud, another app) or delete them. |
 
 Streaming starts as soon as the device is connected; recording to a file is a separate step.
@@ -46,15 +46,18 @@ The app records through the night with the screen off:
 
 - **Screen off or another app in front:** while connected, a notification shows that the app
   is running, and Android leaves it alone. Before the first recording the app asks to be
-  exempted from battery optimisation; allow it. Do not swipe the app away in the list of recent
-  apps, that ends it.
+  exempted from battery optimisation; allow it. The Back button only closes the window, the
+  recording goes on. Do not swipe the app away in the list of recent apps, that ends it.
 - **Connection lost:** the app connects again by itself, every few seconds, for as long as it
-  takes. The recording keeps going.
+  takes. The recording keeps going. If no data arrives for 20 seconds although the phone still
+  reports a connection, the app connects again as well.
 - **Gaps:** samples that did not arrive over Bluetooth are fetched back from the device's microSD
   card once they are a minute old, while the live stream continues. The Device page shows how
   much was fetched back and how much is still to come. When you tap Stop, the app first fetches
   what is still missing; tap again to save at once. Without a microSD card in the device, gaps
   stay gaps.
+- **Devices with fewer channels:** the pages offer only the channels the device streams. The CSV
+  always has eight channel columns; the ones not streamed are 0.
 - **Device switched off and on:** its sample counter starts again from zero. The app saves the
   recording and starts a new one.
 
@@ -123,6 +126,10 @@ lib/
 ├── recording/recorder.dart              CSV files: write, list, share
 └── ui/                                  one file per page
 ```
+
+One piece is native: [`MainActivity.kt`](android/app/src/main/kotlin/org/sd20/traumschreiber_minimal/MainActivity.kt)
+keeps the Dart engine running when Android closes the app's window (Back button, or the system
+reclaiming memory). Without it, the recording would end with the window.
 
 The data flows in one direction:
 
@@ -211,7 +218,7 @@ Open a recording in Python:
 ```python
 import pandas as pd
 eeg = pd.read_csv("TS_20261101_221403.csv", comment="#")
-eeg.plot(x="time_s", y="ch0")
+eeg.plot(x="time_s", y="ch2")
 ```
 
 ## Ideas for your own version

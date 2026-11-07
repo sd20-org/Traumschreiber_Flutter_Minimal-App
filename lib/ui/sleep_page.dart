@@ -66,7 +66,8 @@ class SleepPage extends StatelessWidget {
       Section(
         title: 'Scored channel',
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          ChannelPicker(value: app.sleepChannel, onChanged: app.setSleepChannel),
+          ChannelPicker(value: app.sleepChannel, onChanged: app.setSleepChannel,
+          available: app.device.status.channels),
           const SizedBox(height: 8),
           const Text(
             'Use a forehead channel against the mastoid if you have one. '

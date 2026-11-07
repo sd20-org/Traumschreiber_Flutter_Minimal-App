@@ -87,7 +87,11 @@ class Section extends StatelessWidget {
 class ChannelPicker extends StatelessWidget {
   final int value;
   final ValueChanged<int> onChanged;
-  const ChannelPicker({super.key, required this.value, required this.onChanged});
+
+  /// The channels the device streams; the others carry no signal.
+  final List<int> available;
+  const ChannelPicker(
+      {super.key, required this.value, required this.onChanged, required this.available});
 
   @override
   Widget build(BuildContext context) => SizedBox(
@@ -95,7 +99,7 @@ class ChannelPicker extends StatelessWidget {
         child: ListView(
           scrollDirection: Axis.horizontal,
           children: [
-            for (var ch = 0; ch < 8; ch++)
+            for (final ch in available)
               Padding(
                 padding: const EdgeInsets.only(right: 6),
                 child: ChoiceChip(

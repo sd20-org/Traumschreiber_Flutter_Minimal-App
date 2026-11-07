@@ -37,7 +37,8 @@ class _SignalPageState extends State<SignalPage> {
         : math.max(10.0, y.fold(0.0, (m, v) => math.max(m, v.abs())) * 1.1);
 
     return ListView(padding: const EdgeInsets.all(16), children: [
-      ChannelPicker(value: app.channel, onChanged: app.setChannel),
+      ChannelPicker(value: app.channel, onChanged: app.setChannel,
+          available: app.device.status.channels),
       const SizedBox(height: 12),
       Card(
         child: SizedBox(

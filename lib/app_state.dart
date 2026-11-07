@@ -33,8 +33,8 @@ class AppState extends ChangeNotifier {
   final filtered = List.generate(kChannels, (_) => RingBuffer(bufferSeconds * kSampleRateHz));
   final _filters = List.generate(kChannels, (_) => DisplayFilter());
 
-  int channel = 0; // shown in the live plot and the spectrum
-  int sleepChannel = 0; // scored by the sleep model
+  int channel = 2; // shown in the live plot and the spectrum (CH2 by default)
+  int sleepChannel = 2; // scored by the sleep model (CH2 by default)
   int samplesReceived = 0;
 
   /// Samples that did not arrive over Bluetooth (gaps in the live stream).
@@ -53,6 +53,7 @@ class AppState extends ChangeNotifier {
 
   AppState() {
     Background.init();
+    Recorder.mergeLeftovers();
     device.addListener(_onDeviceChanged);
     stager.addListener(notifyListeners);
     _subs.add(device.samples.listen(_onSamples));
@@ -67,6 +68,7 @@ class AppState extends ChangeNotifier {
     if (device.phase != _phase) {
       _phase = device.phase;
       if (_phase == ConnectionPhase.reconnecting) backfill.onLinkLost();
+      if (_phase == ConnectionPhase.connected) _pickStreamedChannels();
       // Disconnected on purpose: nothing more can be fetched, save now.
       if (!device.isActive && _phase != ConnectionPhase.connecting &&
           _phase != ConnectionPhase.scanning) {
@@ -77,6 +79,16 @@ class AppState extends ChangeNotifier {
       }
     }
     notifyListeners();
+  }
+
+  /// A device may stream fewer than eight channels, e.g. a one-channel
+  /// Traumschreiber only CH0 or only CH5. Show and score a channel that
+  /// carries a signal.
+  void _pickStreamedChannels() {
+    final streamed = device.status.channels;
+    if (streamed.isEmpty) return;
+    if (!streamed.contains(channel)) channel = streamed.first;
+    if (!streamed.contains(sleepChannel)) setSleepChannel(streamed.first);
   }
 
   void _everySecond() {

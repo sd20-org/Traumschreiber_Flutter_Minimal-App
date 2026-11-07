@@ -184,6 +184,13 @@ class Traumschreiber extends ChangeNotifier {
   final _subs = <StreamSubscription>[];
   StreamSubscription? _connection;
 
+  // Watchdog: the device sends a packet (at least a keep-alive) several
+  // times a second. If nothing arrives for [_silenceLimit], the link is
+  // dead even if Android has not noticed yet: connect again.
+  static const _silenceLimit = Duration(seconds: 20);
+  DateTime _lastPacket = DateTime.now();
+  Timer? _watchdog;
+
   ConnectionPhase phase = ConnectionPhase.disconnected;
   String? deviceName;
   String? error;
@@ -219,6 +226,16 @@ class Traumschreiber extends ChangeNotifier {
   void _set(ConnectionPhase p, {String? err}) {
     phase = p;
     error = err;
+    _watchdog?.cancel();
+    if (p == ConnectionPhase.connected) {
+      _lastPacket = DateTime.now();
+      _watchdog = Timer.periodic(const Duration(seconds: 5), (_) {
+        if (phase == ConnectionPhase.connected &&
+            DateTime.now().difference(_lastPacket) > _silenceLimit) {
+          _reconnect();
+        }
+      });
+    }
     notifyListeners();
   }
 
@@ -260,40 +277,81 @@ class Traumschreiber extends ChangeNotifier {
   /// The link dropped: out of range, the phone's Bluetooth was switched off
   /// and on, the device was switched off. Wait until the device shows up in
   /// a scan, then connect; repeat until it works or the user taps
-  /// Disconnect. Lessons from the sd20 app:
+  /// Disconnect. Lessons from the sd20 app and from testing:
   ///   * Connecting blindly by address fails after Android's Bluetooth
   ///     restarted: it forgets the device's address type. A scan sighting
   ///     tells it again.
-  ///   * With the screen off, Android only runs scans with a filter. The
-  ///     device advertises the LED/button service UUID, so filter on that.
-  ///   * Keep one scan open for the whole outage: every new scan leaves a
-  ///     thread behind in the Bluetooth plugin.
+  ///   * No single kind of scan works on every phone. With the screen off,
+  ///     stock Android delivers results only to scans with a filter; a
+  ///     Samsung tablet (SM-T510) delivered nothing to the same filter,
+  ///     only to a scan without one. So alternate: without a filter while
+  ///     it hears anything at all, with the LED/button service UUID as
+  ///     filter when it falls silent, and back.
+  ///   * Do not restart scans more often than needed: every new scan leaves
+  ///     a thread behind in the Bluetooth plugin. After half an hour of
+  ///     trying, switch only every few minutes.
+  ///   * Android quietly turns a scan older than 30 minutes into one that
+  ///     finds nothing with the screen off: never keep one longer than 10.
+  ///   * With the screen off, that Samsung tablet ran no unfiltered scan at
+  ///     all and its filtered scan found nothing. So if no scan has seen the
+  ///     device for a minute, also try to connect directly, once a minute.
+  ///     That works whenever Android still knows the device's address type,
+  ///     which is the usual case: the device went out of range.
   ///   * Give a connection attempt more than Android's own 30 s.
   Future<void> _reconnect() async {
     final id = _deviceId;
-    if (id == null) return;
-    await _tearDown();
+    // Only once: the watchdog and Android may both report the same loss.
+    if (id == null || phase != ConnectionPhase.connected) return;
     connectedSince = null;
     _set(ConnectionPhase.reconnecting, err: 'Connection lost, reconnecting…');
+    await _tearDown();
 
+    final episodeStart = DateTime.now();
     var seen = false;
+    var filtered = false;
     StreamSubscription? scan;
+    var scanStarted = DateTime.now();
+    var lastHeard = DateTime.now();
     void startScan() {
+      scanStarted = lastHeard = DateTime.now();
       scan = _ble
-          .scanForDevices(withServices: [_lbsService], scanMode: ScanMode.lowLatency)
-          .listen((d) => seen |= d.id == id, onError: (_) => scan = null);
+          .scanForDevices(
+              withServices: filtered ? [_lbsService] : [],
+              scanMode: ScanMode.lowLatency)
+          .listen((d) {
+        lastHeard = DateTime.now();
+        seen |= d.id == id;
+      }, onError: (_) => scan = null);
+    }
+
+    Future<void> switchScan() async {
+      await scan?.cancel();
+      filtered = !filtered;
+      startScan();
     }
 
     startScan();
     var lastAttempt = DateTime(0);
+    var lastBlind = DateTime.now();
     while (phase == ConnectionPhase.reconnecting) {
       await Future.delayed(const Duration(seconds: 1));
-      if (scan == null && DateTime.now().difference(lastAttempt).inSeconds > 30) {
-        startScan(); // the scan failed (e.g. Bluetooth was off): open it again
-        lastAttempt = DateTime.now();
+      final now = DateTime.now();
+      final slow = now.difference(episodeStart) > const Duration(minutes: 30);
+      final patience = slow ? const Duration(minutes: 5) : const Duration(seconds: 45);
+      if (scan == null) {
+        if (now.difference(lastAttempt).inSeconds > 30) {
+          lastAttempt = now;
+          await switchScan(); // the scan failed (e.g. Bluetooth was off)
+        }
+      } else if (now.difference(scanStarted) >= const Duration(minutes: 10) ||
+          (!filtered && now.difference(lastHeard) >= patience) ||
+          (filtered && now.difference(scanStarted) >= patience)) {
+        await switchScan();
       }
-      if (!seen) continue;
+      final blind = !seen && now.difference(lastBlind) >= const Duration(seconds: 60);
+      if (!seen && !blind) continue;
       seen = false;
+      lastBlind = now;
       try {
         await _connect(id, timeout: const Duration(seconds: 35));
         await _setUp(id);
@@ -372,7 +430,11 @@ class Traumschreiber extends ChangeNotifier {
         }
       }
     }, onError: (e) {
-      if (!connected.isCompleted) connected.completeError(e);
+      if (!connected.isCompleted) {
+        connected.completeError(e);
+      } else if (phase == ConnectionPhase.connected) {
+        _reconnect();
+      }
     });
     await connected.future.timeout(timeout + const Duration(seconds: 5));
   }
@@ -435,6 +497,7 @@ class Traumschreiber extends ChangeNotifier {
         .subscribeToCharacteristic(QualifiedCharacteristic(
             serviceId: _adsService, characteristicId: _adsData, deviceId: id))
         .listen((packet) {
+      _lastPacket = DateTime.now();
       final block = decodePacket(packet, status);
       if (block.length > 0 && block.sampleNumbers.first >= oldest) {
         _samples.add(block);
@@ -503,6 +566,7 @@ class Traumschreiber extends ChangeNotifier {
 
   @override
   void dispose() {
+    _watchdog?.cancel();
     _tearDown();
     _samples.close();
     _backfill.close();

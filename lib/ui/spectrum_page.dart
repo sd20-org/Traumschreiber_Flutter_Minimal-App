@@ -80,7 +80,8 @@ class _SpectrumPageState extends State<SpectrumPage> {
     final total = bandPower.fold(0.0, (a, b) => a + b);
 
     return ListView(padding: const EdgeInsets.all(16), children: [
-      ChannelPicker(value: app.channel, onChanged: app.setChannel),
+      ChannelPicker(value: app.channel, onChanged: app.setChannel,
+          available: app.device.status.channels),
       const SizedBox(height: 12),
       Card(
         child: SizedBox(

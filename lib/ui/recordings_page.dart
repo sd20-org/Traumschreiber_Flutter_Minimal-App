@@ -59,7 +59,7 @@ class _RecordingsPageState extends State<RecordingsPage> {
                     color: live ? kRecord : kAccent),
                 title: Text(r.name),
                 subtitle: Text(
-                    '${_date(r.modified)} · ${_duration(r.approxDuration)} · '
+                    '${_date(r.modified)} · ${_duration(r.duration)} · '
                     '${(r.bytes / 1e6).toStringAsFixed(1)} MB'
                     '${extras.isNotEmpty ? ' · +${extras.length} file${extras.length > 1 ? 's' : ''}' : ''}',
                     style: const TextStyle(color: Colors.white54, fontSize: 12)),

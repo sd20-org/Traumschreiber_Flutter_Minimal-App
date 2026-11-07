@@ -31,13 +31,26 @@ class Recording {
   final File file;
   final DateTime modified;
   final int bytes;
-  const Recording(this.file, this.modified, this.bytes);
+  final Duration duration;
+  const Recording(this.file, this.modified, this.bytes, this.duration);
 
   String get name => file.uri.pathSegments.last;
 
-  /// About 80 bytes per sample line.
-  Duration get approxDuration =>
-      Duration(milliseconds: bytes ~/ 80 * 1000 ~/ kSampleRateHz);
+  /// time_s of the last complete line: seconds since the first sample.
+  static Duration readDuration(File f) {
+    try {
+      final raf = f.openSync();
+      final len = raf.lengthSync();
+      raf.setPositionSync(len > 400 ? len - 400 : 0);
+      final tail = String.fromCharCodes(raf.readSync(400));
+      raf.closeSync();
+      final lines = tail.split('\n').where((l) => l.split(',').length > 2).toList();
+      final seconds = double.tryParse(lines.isEmpty ? '' : lines.last.split(',')[1]);
+      return Duration(milliseconds: ((seconds ?? 0) * 1000).round());
+    } catch (_) {
+      return Duration.zero;
+    }
+  }
 }
 
 class Recorder {
@@ -123,6 +136,23 @@ class Recorder {
     return f;
   }
 
+  /// A recording that ended without [stop] (the app was ended mid-way)
+  /// leaves its …csv.backfill next to it. Sort those samples in now.
+  static Future<void> mergeLeftovers() async {
+    final folder = await _folder();
+    for (final extra in folder.listSync().whereType<File>()) {
+      if (!extra.path.endsWith('.csv.backfill')) continue;
+      final main = File(extra.path.substring(0, extra.path.length - 9));
+      try {
+        if (await main.exists() && await extra.length() > 0) {
+          final paths = (main.path, extra.path);
+          await Isolate.run(() => mergeCsv(paths.$1, paths.$2));
+        }
+        await extra.delete();
+      } catch (_) {} // could not read it: leave both files as they are
+    }
+  }
+
   static Future<List<Recording>> list() async {
     final files = (await _folder())
         .listSync()
@@ -130,7 +160,7 @@ class Recorder {
         .where((f) => f.path.endsWith('.csv'))
         .toList();
     final list = [
-      for (final f in files) Recording(f, f.lastModifiedSync(), f.lengthSync())
+      for (final f in files) Recording(f, f.lastModifiedSync(), f.lengthSync(), Recording.readDuration(f))
     ]..sort((a, b) => b.modified.compareTo(a.modified));
     return list;
   }
@@ -147,7 +177,11 @@ class Recorder {
 Future<void> mergeCsv(String mainPath, String extraPath) async {
   Stream<String> lines(String p) =>
       File(p).openRead().transform(utf8.decoder).transform(const LineSplitter());
-  int number(String line) => int.parse(line.substring(0, line.indexOf(',')));
+  // A recording cut off mid-write can end in half a line: skip such lines.
+  int? number(String line) {
+    final comma = line.indexOf(',');
+    return comma < 0 ? null : int.tryParse(line.substring(0, comma));
+  }
 
   final a = StreamIterator(lines(mainPath));
   final b = StreamIterator(lines(extraPath));
@@ -160,7 +194,11 @@ Future<void> mergeCsv(String mainPath, String extraPath) async {
     hasA = await a.moveNext();
   }
   while (hasA || hasB) {
-    if (hasB && (!hasA || number(b.current) < number(a.current))) {
+    if (hasA && number(a.current) == null) {
+      hasA = await a.moveNext();
+    } else if (hasB && number(b.current) == null) {
+      hasB = await b.moveNext();
+    } else if (hasB && (!hasA || number(b.current)! < number(a.current)!)) {
       out.writeln(b.current);
       hasB = await b.moveNext();
     } else if (hasB && number(b.current) == number(a.current)) {

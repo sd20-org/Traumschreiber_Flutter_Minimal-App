@@ -59,6 +59,23 @@ void main() {
     expect(s.gains[2], 8);
   });
 
+  test('a device streaming only CH5: status and packets', () {
+    final raw = <int>[1, ...List.filled(12, 0), 0x20, 1, 5];
+    raw.add(0); // compress bits
+    raw.addAll([0, 0, 0, 0]); // delta max
+    raw.addAll([0x10, 0x27, 0, 0]); // sample counter 10000
+    raw.addAll([0, 0, 0, 0]); // SD state
+    raw.addAll([4, 3]); // gain, bytes per value
+    final s = DeviceStatus.parse(raw);
+    expect(s.channels, [5]);
+    // One sample: number 7, time, one 24-bit value 0x000100 = 256, status.
+    final packet = [0xC0, 7, 0, 0, 0, ...List.filled(8, 0), 0x00, 0x01, 0x00, 0, 0, 0, 0];
+    final block = decodePacket(packet, s);
+    expect(block.sampleNumbers, [7]);
+    expect(block.microvolts[0][5], closeTo(256 * 1.2e6 / 4 / 8388608, 1e-9));
+    expect(block.microvolts[0][0], 0);
+  });
+
   test('spectrum peaks at the frequency of a sine', () {
     final x = [for (var i = 0; i < 2000; i++) 20 * math.sin(2 * math.pi * 10 * i / 250)];
     final s = welch(x, 250);
