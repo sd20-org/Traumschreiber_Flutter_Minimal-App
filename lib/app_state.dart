@@ -160,6 +160,18 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> connect() async {
+    _resetStream();
+    await Background.start('Connecting…');
+    await device.connect();
+  }
+
+  /// Plays a recorded night instead of a device, see [Traumschreiber.startDemo].
+  Future<void> startDemo() async {
+    _resetStream();
+    await device.startDemo();
+  }
+
+  void _resetStream() {
     samplesReceived = 0;
     samplesLost = 0;
     _lastSampleNumber = null;
@@ -170,8 +182,6 @@ class AppState extends ChangeNotifier {
       f.reset();
     }
     stager.reset();
-    await Background.start('Connecting…');
-    await device.connect();
   }
 
   Future<void> disconnect() => device.disconnect();
@@ -220,6 +230,7 @@ class AppState extends ChangeNotifier {
     backfill.clear();
     notifyListeners();
     final started = recorder.startedAt;
+    await stager.finishTail(); // final scores for the last ten minutes
     final file = await recorder.stop();
     if (file != null && started != null) {
       final epochs = stager.hypnogram.where(

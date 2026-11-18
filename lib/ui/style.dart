@@ -40,13 +40,20 @@ const kCiLightBlue = Color(0xFFABD5FF);
 const kCiLightOrange = Color(0xFFFFC8A8);
 const kCiLightPink = Color(0xFFE8A8FF);
 
-/// Colours used in hypnograms everywhere (fixed, so plots stay comparable).
+/// Stage colours, the same as in the sd20 app and in plot_sleep_scoring.py
+/// (fixed, so plots stay comparable).
+const kStageWake = Color(0xFFABD5FF);
+const kStageN1 = Color(0xFFFFF4A8);
+const kStageN2 = Color(0xFFFFC8A8);
+const kStageN3 = Color(0xFFFF9151);
+const kStageRem = Color(0xFFD151FF);
+
 Color stageColor(SleepStage s) => switch (s) {
-      SleepStage.wake => kCiYellow,
-      SleepStage.rem => kCiPink,
-      SleepStage.n1 => kCiLightOrange,
-      SleepStage.n2 => kCiOrange,
-      SleepStage.n3 => kCiLightBlue,
+      SleepStage.wake => kStageWake,
+      SleepStage.rem => kStageRem,
+      SleepStage.n1 => kStageN1,
+      SleepStage.n2 => kStageN2,
+      SleepStage.n3 => kStageN3,
     };
 
 String stageLabel(SleepStage s) => switch (s) {

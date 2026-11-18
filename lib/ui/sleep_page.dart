@@ -1,8 +1,9 @@
-// Current sleep stage and the hypnogram of this session.
+// Current sleep stage, stage probabilities and the hypnogram of this session.
 import 'package:flutter/material.dart';
 
 import '../analysis/sleep_staging.dart';
 import '../app_state.dart';
+import 'sleep_plots.dart';
 import 'style.dart';
 
 class SleepPage extends StatelessWidget {
@@ -48,18 +49,25 @@ class SleepPage extends StatelessWidget {
       ),
       const SizedBox(height: 12),
       Section(
-        title: 'Hypnogram',
-        child: SizedBox(
-          height: 170,
-          child: CustomPaint(painter: HypnogramPainter(st.hypnogram), size: Size.infinite),
+        title: 'Probabilities',
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: SizedBox(
+            height: 160,
+            child: CustomPaint(painter: ProbabilityPainter(st.hypnogram), size: Size.infinite),
+          ),
         ),
       ),
       const SizedBox(height: 12),
       Section(
-        title: 'Hypnodensity',
-        child: SizedBox(
-          height: 150,
-          child: CustomPaint(painter: HypnodensityPainter(st.hypnogram), size: Size.infinite),
+        title: 'Hypnogram',
+        trailing: const StageLegend(),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: SizedBox(
+            height: 110,
+            child: CustomPaint(painter: HypnogramPainter(st.hypnogram), size: Size.infinite),
+          ),
         ),
       ),
       const SizedBox(height: 12),
@@ -94,82 +102,4 @@ class SleepPage extends StatelessWidget {
                 : '${(st.hypnogram.last.confidence * 100).round()} % confidence · '
                     '${st.hypnogram.length} epoch${st.hypnogram.length == 1 ? '' : 's'} scored'),
       };
-}
-
-/// Classic step plot: Wake on top, then REM, N1, N2, N3.
-class HypnogramPainter extends CustomPainter {
-  final List<Epoch> epochs;
-  HypnogramPainter(this.epochs);
-
-  static const _order = [SleepStage.wake, SleepStage.rem, SleepStage.n1, SleepStage.n2, SleepStage.n3];
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    const left = 44.0;
-    final w = size.width - left, rowH = size.height / _order.length;
-    for (var r = 0; r < _order.length; r++) {
-      final y = rowH * (r + 0.5);
-      canvas.drawLine(Offset(left, y), Offset(size.width, y), Paint()..color = Colors.white10);
-      (TextPainter(
-              text: TextSpan(
-                  text: stageLabel(_order[r]),
-                  style: TextStyle(color: stageColor(_order[r]), fontSize: 11)),
-              textDirection: TextDirection.ltr)
-            ..layout())
-          .paint(canvas, Offset(0, y - 7));
-    }
-    if (epochs.isEmpty) return;
-    final n = epochs.length < 20 ? 20 : epochs.length; // fill from the left
-    final bw = w / n;
-    for (var i = 0; i < epochs.length; i++) {
-      final r = _order.indexOf(epochs[i].stage);
-      canvas.drawRRect(
-          RRect.fromRectAndRadius(
-              Rect.fromLTWH(left + i * bw, rowH * r + rowH * 0.2, bw + 0.5, rowH * 0.6),
-              const Radius.circular(3)),
-          Paint()..color = stageColor(epochs[i].stage));
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
-}
-
-/// For every epoch, how likely the model finds each stage: a stacked bar,
-/// Wake on top and N3 at the bottom. Mixed colours mean the model is unsure.
-class HypnodensityPainter extends CustomPainter {
-  final List<Epoch> epochs;
-  HypnodensityPainter(this.epochs);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    const left = 44.0;
-    final w = size.width - left, h = size.height;
-    for (final f in [0.0, 0.5, 1.0]) {
-      final y = h * f;
-      canvas.drawLine(Offset(left, y), Offset(size.width, y), Paint()..color = Colors.white10);
-      (TextPainter(
-              text: TextSpan(
-                  text: '${(100 * (1 - f)).round()} %',
-                  style: const TextStyle(color: Colors.white38, fontSize: 10)),
-              textDirection: TextDirection.ltr)
-            ..layout())
-          .paint(canvas, Offset(0, (y - 6).clamp(0, h - 12)));
-    }
-    if (epochs.isEmpty) return;
-    final n = epochs.length < 20 ? 20 : epochs.length;
-    final bw = w / n;
-    for (var i = 0; i < epochs.length; i++) {
-      var y = 0.0;
-      for (final s in HypnogramPainter._order) {
-        final hh = epochs[i].probabilities[s.index] * h;
-        canvas.drawRect(Rect.fromLTWH(left + i * bw, y, bw + 0.5, hh),
-            Paint()..color = stageColor(s));
-        y += hh;
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }

@@ -23,6 +23,10 @@ No programming needed:
 4. Switch the Traumschreiber on, open the app, tap **Connect** and allow access to nearby
    devices.
 
+No Traumschreiber at hand? Tap **Try the demo** on the Device page: the app plays half an hour of a
+real night (CH2 of a Traumschreiber on the forehead) in real time, and every page works as with a
+device.
+
 The sleep model is built into the APK, so the app works without internet. For a newer
 version, download the APK again and install it over the old one; your recordings stay.
 
@@ -33,7 +37,7 @@ version, download the APK again and install it over the old one; your recordings
 | **Device** | Connect and disconnect, battery level, how many samples arrived or were lost. Set the colour of the device's LED, play its start sound, and see every press of its button with date and time. **Record** starts and stops saving to a file. |
 | **Signal** | One of the EEG channels in real time (CH2 unless you pick another), filtered 0.5–35 Hz with a 50 Hz notch, over the last 5, 10 or 30 seconds. |
 | **Spectrum** | Spectrogram of the last 60 seconds of the same channel from 0 to 60 Hz (one column per second, smoothed with a 5-second median), and how the power splits into the delta, theta, alpha, sigma and beta bands. |
-| **Sleep** | The current sleep stage, the hypnogram and the hypnodensity (how sure the model is about each stage), scored every 30 seconds from CH2 (or the channel you pick) by the open-source model [AnySleep](https://github.com/dslaborg/AnySleep). |
+| **Sleep** | The current sleep stage, the stage probabilities (how sure the model is about each stage) and the hypnogram with a time axis, scored every 30 seconds from CH2 (or the channel you pick) by the open-source model [AnySleep](https://github.com/dslaborg/AnySleep). |
 | **Recordings** | Your saved recordings. Share them (e-mail, cloud, another app) or delete them. |
 
 Streaming starts as soon as the device is connected; recording to a file is a separate step.
@@ -121,8 +125,8 @@ lib/
 ├── app_state.dart                       hands every block of samples to plot, spectrum, sleep, recorder
 ├── analysis/
 │   ├── spectrum.dart                    power spectrum (Welch) with a small FFT
-│   ├── sleep_staging.dart               30-second epochs → AnySleep on a background isolate
-│   └── dsp_filters.dart                 the model's preprocessing, identical to the Python script
+│   ├── sleep_staging.dart               30-second epochs → AnySleep on a background isolate, centred rescoring
+│   └── dsp_filters.dart                 the model's preprocessing, same steps as the Python script
 ├── recording/recorder.dart              CSV files: write, list, share
 └── ui/                                  one file per page
 ```
@@ -186,10 +190,16 @@ All of this is in [`decodePacket`](lib/traumschreiber/traumschreiber.dart) and
 
 ### Sleep staging
 
-Every 30 seconds, the newest epoch is scored together with up to 19 earlier ones for context,
-the way a human scorer looks at the neighbours. The preprocessing (50 Hz notch, 0.3–35 Hz band
-pass, resampling to 128 Hz, robust scaling) is identical to the Python script, so both give the
-same stages for the same data. The ONNX model was exported from the AnySleep weights with
+Every 30 seconds the model looks at the last 41 epochs (20.5 minutes), the way a human scorer
+looks at the neighbours. The newest epoch only has the past as context; its stage is shown at
+once as the current stage. The epoch ten minutes back has ten minutes on each side by then, and
+that score replaces the quick one in the hypnogram, so the hypnogram trails by ten minutes but
+jumps between stages far less often. When you stop a recording, the last ten minutes are scored
+again before `…_stages.csv` is written. The preprocessing (50 Hz notch, 0.3–35 Hz band
+pass, resampling to 128 Hz, robust scaling) follows the Python script step by step. The two
+differ slightly in the filters' details: on 60 epochs of a real night, 57 got the same stage, and
+the probabilities differ by at most 0.08. `integration_test/model_parity_test.dart` checks this on a
+phone. The ONNX model was exported from the AnySleep weights with
 [`tool/export_anysleep_onnx.py`](tool/export_anysleep_onnx.py) so that it accepts any length.
 
 Use a channel on the forehead referenced to the mastoid if you have one; the model was trained

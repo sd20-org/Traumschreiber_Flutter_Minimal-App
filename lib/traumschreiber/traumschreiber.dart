@@ -21,8 +21,10 @@
 // reference). The gain is read from the status characteristic.
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show GZipCodec;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -260,7 +262,54 @@ class Traumschreiber extends ChangeNotifier {
     }
   }
 
+  /// Demo without a device: plays half an hour of a real night (CH2 of a
+  /// Traumschreiber on the forehead, built into the app) in real time, as if
+  /// it came over Bluetooth. Everything downstream (plot, spectrum, sleep
+  /// stages, recording) works as with a device.
+  bool isDemo = false;
+  Timer? _demoTimer;
+  static const _demoAsset = 'assets/demo/demo_ch2.f32.gz';
+  static const _demoChannel = 2;
+
+  Future<void> startDemo() async {
+    if (phase != ConnectionPhase.disconnected) return;
+    final gz = await rootBundle.load(_demoAsset);
+    final bytes = Uint8List.fromList(
+        GZipCodec().decode(gz.buffer.asUint8List(gz.offsetInBytes, gz.lengthInBytes)));
+    final data = Float32List.view(bytes.buffer, 0, bytes.length ~/ 4);
+    isDemo = true;
+    deviceName = 'Demo: a recorded night';
+    status = DeviceStatus(const [_demoChannel], List<int>.filled(kChannels, 4), 0);
+    batteryPercent = null;
+    reconnects = 0;
+    connectedSince = DateTime.now();
+    _set(ConnectionPhase.connected);
+    final clock = Stopwatch()..start();
+    var sent = 0;
+    _demoTimer = Timer.periodic(const Duration(milliseconds: 40), (_) {
+      final due = clock.elapsedMicroseconds * kSampleRateHz ~/ 1000000;
+      if (due <= sent) return;
+      final numbers = <int>[];
+      final values = <List<double>>[];
+      for (; sent < due; sent++) {
+        numbers.add(sent);
+        values.add(List<double>.filled(kChannels, 0)
+          ..[_demoChannel] = data[sent % data.length].toDouble());
+      }
+      _lastPacket = DateTime.now();
+      _samples.add(SampleBlock(numbers, values));
+    });
+  }
+
   Future<void> disconnect() async {
+    if (isDemo) {
+      _demoTimer?.cancel();
+      _demoTimer = null;
+      isDemo = false;
+      connectedSince = null;
+      _set(ConnectionPhase.disconnected);
+      return;
+    }
     final id = _deviceId;
     final wasConnected = isConnected;
     _set(ConnectionPhase.disconnected); // also ends a running reconnect loop
@@ -567,6 +616,7 @@ class Traumschreiber extends ChangeNotifier {
   @override
   void dispose() {
     _watchdog?.cancel();
+    _demoTimer?.cancel();
     _tearDown();
     _samples.close();
     _backfill.close();

@@ -14,7 +14,7 @@
     <!-- Downloads the AnySleep model once, unless it is bundled. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <application
-        android:label="Traumschreiber Minimal"
+        android:label="sd20 Traumschreiber"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

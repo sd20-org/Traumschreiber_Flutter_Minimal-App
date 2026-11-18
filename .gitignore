@@ -46,3 +46,4 @@ app.*.map.json
 
 # The AnySleep model (13 MB) is published as a release asset, not in git.
 assets/models/*.onnx
+assets/models/parity_*

@@ -20,7 +20,7 @@ class DevicePage extends StatelessWidget {
       ConnectionPhase.disconnected => ('Not connected', Colors.white38),
       ConnectionPhase.scanning => ('Searching…', kAccent),
       ConnectionPhase.connecting => ('Connecting…', kAccent),
-      ConnectionPhase.connected => ('Streaming', kSignal),
+      ConnectionPhase.connected => (d.isDemo ? 'Playing in real time' : 'Streaming', kSignal),
       ConnectionPhase.reconnecting => ('Reconnecting…', kAccent),
     };
     final lostPct = app.samplesReceived == 0
@@ -65,13 +65,20 @@ class DevicePage extends StatelessWidget {
               child: d.isActive
                   ? OutlinedButton.icon(
                       onPressed: app.disconnect,
-                      icon: const Icon(Icons.link_off_rounded),
-                      label: const Text('Disconnect'))
+                      icon: Icon(d.isDemo ? Icons.stop_rounded : Icons.link_off_rounded),
+                      label: Text(d.isDemo ? 'Stop demo' : 'Disconnect'))
                   : FilledButton.icon(
                       onPressed: busy ? null : app.connect,
                       icon: const Icon(Icons.bluetooth_searching_rounded),
                       label: const Text('Connect')),
             ),
+            if (!d.isActive && !busy) ...[
+              const SizedBox(height: 8),
+              TextButton.icon(
+                  onPressed: app.startDemo,
+                  icon: const Icon(Icons.play_circle_outline_rounded),
+                  label: const Text('No Traumschreiber? Try the demo')),
+            ],
           ]),
         ),
       ),
@@ -80,7 +87,8 @@ class DevicePage extends StatelessWidget {
         Section(
           title: 'Device',
           child: Column(children: [
-            _row('Battery', d.batteryPercent == null ? '–' : '${d.batteryPercent} %'),
+            if (!d.isDemo)
+              _row('Battery', d.batteryPercent == null ? '–' : '${d.batteryPercent} %'),
             _row('Channels streamed', d.status.channels.join(', ')),
             _row('Amplifier gain', '×${d.status.gains.toSet().join(' / ×')}'),
             _row('Samples received', '${app.samplesReceived}'),
@@ -92,7 +100,18 @@ class DevicePage extends StatelessWidget {
         const SizedBox(height: 12),
         _Backfill(app: app),
       ],
-      if (d.isConnected) ...[
+      if (d.isDemo) ...[
+        const SizedBox(height: 12),
+        const Section(
+          title: 'Demo',
+          child: Text(
+            'Half an hour of a real night, recorded with a Traumschreiber on the forehead (CH2), '
+            'played in real time. Signal and spectrum start at once, the first sleep stage '
+            'appears after one minute. Record works as with a device.',
+            style: TextStyle(height: 1.5, color: Colors.white70),
+          ),
+        ),
+      ] else if (d.isConnected) ...[
         const SizedBox(height: 12),
         _LedAndSound(device: d),
         const SizedBox(height: 12),

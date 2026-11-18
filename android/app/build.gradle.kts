@@ -62,3 +62,11 @@ android {
 flutter {
     source = "../.."
 }
+
+// The sleep model runs on ONNX Runtime from Maven. The plugin onnxruntime_v2
+// asks for 1.23.2, which crashes on 32-bit phones (SIGBUS, unaligned read,
+// seen on a Samsung SM-T510). 1.32.0 runs there, gives the same results to
+// within 1e-6 and is aligned for 16 KB memory pages, as Google Play requires.
+configurations.all {
+    resolutionStrategy.force("com.microsoft.onnxruntime:onnxruntime-android:1.32.0")
+}

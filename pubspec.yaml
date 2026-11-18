@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.1.3+5
+version: 1.1.7+9
 
 environment:
   sdk: ^3.10.7
@@ -37,7 +37,7 @@ dependencies:
 
   flutter_reactive_ble: ^5.4.0   # Bluetooth Low Energy
   permission_handler: ^12.0.1    # Bluetooth runtime permissions on Android
-  onnxruntime: ^1.4.1            # runs the AnySleep sleep-staging model
+  onnxruntime_v2: ^1.23.2         # runs the AnySleep sleep-staging model (16 KB pages)
   http: ^1.6.0                   # downloads the model on first use
   path_provider: ^2.1.5          # where recordings are stored
   share_plus: ^12.0.1            # share recordings with other apps
@@ -45,6 +45,8 @@ dependencies:
 
 dev_dependencies:
   flutter_test:
+    sdk: flutter
+  integration_test:              # on-device check of the sleep model, see integration_test/
     sdk: flutter
 
   # The "flutter_lints" package below contains a set of recommended lints to
@@ -68,6 +70,7 @@ flutter:
   # Optional: put anysleep.onnx here to work offline (tool/fetch_model.sh).
   assets:
     - assets/models/
+    - assets/demo/
 
   # To add assets to your application, add an assets section, like this:
   # assets:

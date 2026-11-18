@@ -25,7 +25,7 @@ class TraumschreiberApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => MaterialApp(
-        title: 'Traumschreiber Minimal',
+        title: 'sd20 Traumschreiber',
         debugShowCheckedModeBanner: false,
         theme: buildTheme(),
         home: const HomeScreen(),
@@ -164,9 +164,9 @@ class _StatusPill extends StatelessWidget {
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         Icon(Icons.circle, size: 8, color: on ? kSignal : Colors.white38),
         const SizedBox(width: 6),
-        Text(on ? (d.batteryPercent != null ? '${d.batteryPercent} %' : 'on') : 'off',
+        Text(on ? (d.isDemo ? 'demo' : d.batteryPercent != null ? '${d.batteryPercent} %' : 'on') : 'off',
             style: TextStyle(fontSize: 12, color: on ? kSignal : Colors.white54)),
-        if (on) ...[
+        if (on && !d.isDemo) ...[
           const SizedBox(width: 2),
           Icon(Icons.battery_std_rounded, size: 14, color: kSignal),
         ],

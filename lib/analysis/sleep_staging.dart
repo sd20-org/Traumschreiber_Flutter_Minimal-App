@@ -2,9 +2,15 @@
 // MIT licence), exported to ONNX.
 //
 // How it works: collect one EEG channel, cut it into 30-second epochs, and
-// after every new epoch run the model over the last ten minutes. Only the
-// newest epoch is kept; the older ones give the model context (it looks at
-// neighbouring epochs, like a human scorer does).
+// after every new epoch run the model over the last 20.5 minutes (41 epochs).
+// The model looks at neighbouring epochs, like a human scorer does, so each
+// run gives two results:
+//   - the newest epoch, scored from the past only. It is shown at once as the
+//     current stage.
+//   - the epoch ten minutes back, which now has ten minutes of context on
+//     both sides. Its score replaces the quick one in the hypnogram.
+// When a recording stops, the last ten minutes are scored once more with the
+// context there is, so the saved hypnogram has no quick scores left.
 //
 // The model file (~13 MB) is taken from, in this order:
 //   1. a copy saved by an earlier start of the app,
@@ -18,7 +24,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
-import 'package:onnxruntime/onnxruntime.dart';
+import 'package:onnxruntime_v2/onnxruntime_v2.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'dsp_filters.dart';
@@ -42,7 +48,12 @@ enum ModelState { notLoaded, loading, ready, failed }
 
 class SleepStager extends ChangeNotifier {
   static const int epochSamples = 30 * 250;
-  static const int contextEpochs = 20; // ten minutes
+
+  /// Epochs of context on each side of a rescored epoch (ten minutes).
+  static const int lag = 20;
+
+  /// Epochs the model sees per run: [lag] before, the epoch itself, [lag] after.
+  static const int windowEpochs = 2 * lag + 1;
 
   final List<Epoch> hypnogram = [];
   ModelState modelState = ModelState.notLoaded;
@@ -74,10 +85,67 @@ class SleepStager extends ChangeNotifier {
     while (_partial.length >= epochSamples) {
       _context.add(Float64List.fromList(_partial.sublist(0, epochSamples)));
       _partial.removeRange(0, epochSamples);
-      if (_context.length > contextEpochs) _context.removeAt(0);
+      if (_context.length > windowEpochs) _context.removeAt(0);
       _epochCount++;
       _scoreNewest();
     }
+  }
+
+  /// Rescores the last [lag] epochs with the context that exists now. Called
+  /// before a recording is saved, so the saved hypnogram holds no quick
+  /// (past-only) scores. Waits for a run that is still busy.
+  Future<void> finishTail() async {
+    for (var i = 0; _busy && i < 100; i++) {
+      await Future.delayed(const Duration(milliseconds: 100));
+    }
+    final path = _modelPath;
+    if (path == null || _busy || _context.length < 2) return;
+    _busy = true;
+    try {
+      final rows = await _run(path);
+      final n = _context.length;
+      for (var j = math.max(0, n - lag); j < n; j++) {
+        _replace(_epochStart(n - 1 - j), rows[j]);
+      }
+    } catch (e) {
+      error = 'Scoring failed: $e';
+    }
+    _busy = false;
+    notifyListeners();
+  }
+
+  /// Start of the epoch [back] epochs before the newest one.
+  DateTime _epochStart(int back) =>
+      _start!.add(Duration(seconds: 30 * (_epochCount - 1 - back)));
+
+  Future<List<List<double>>> _run(String path) {
+    final epochs = _context.length;
+    final signal = Float64List(epochs * epochSamples);
+    for (var e = 0; e < epochs; e++) {
+      signal.setAll(e * epochSamples, _context[e]);
+    }
+    // Runs on a background isolate so the UI stays smooth. The closure may
+    // only use local variables: everything it touches is copied over.
+    return Isolate.run(() => inferAll(path, signal, epochs));
+  }
+
+  /// Puts probabilities [p] into the hypnogram entry starting at [start].
+  /// If that epoch was never scored (the first one, or one skipped while the
+  /// model was busy), it is inserted at its place.
+  void _replace(DateTime start, List<double> p) {
+    final epoch = Epoch(start, stageOf(p), p);
+    for (var i = hypnogram.length - 1; i >= 0; i--) {
+      final d = hypnogram[i].start.difference(start).inMilliseconds;
+      if (d.abs() < 1000) {
+        hypnogram[i] = epoch;
+        return;
+      }
+      if (d < 0) {
+        hypnogram.insert(i + 1, epoch);
+        return;
+      }
+    }
+    hypnogram.insert(0, epoch);
   }
 
   Future<void> loadModel() async {
@@ -111,25 +179,16 @@ class SleepStager extends ChangeNotifier {
 
   Future<void> _scoreNewest() async {
     // The model needs at least two epochs; skip if the previous run is
-    // still busy (it takes well under a second, an epoch is 30 s).
+    // still busy (it takes about a second, an epoch is 30 s).
     final path = _modelPath;
     if (path == null || _busy || _context.length < 2) return;
     _busy = true;
-    final start = _start!.add(Duration(seconds: 30 * (_epochCount - 1)));
-    final epochs = _context.length;
-    final signal = Float64List(epochs * epochSamples);
-    for (var e = 0; e < epochs; e++) {
-      signal.setAll(e * epochSamples, _context[e]);
-    }
+    final start = _epochStart(0);
     try {
-      // Runs on a background isolate so the UI stays smooth. The closure
-      // may only use local variables: everything it touches is copied over.
-      final p = await Isolate.run(() => _infer(path, signal, epochs));
-      var best = 0;
-      for (var k = 1; k < 5; k++) {
-        if (p[k] > p[best]) best = k;
-      }
-      hypnogram.add(Epoch(start, SleepStage.values[best], p));
+      final rows = await _run(path);
+      hypnogram.add(Epoch(start, stageOf(rows.last), rows.last));
+      // The epoch [lag] back now has [lag] epochs of context on each side.
+      if (rows.length == windowEpochs) _replace(_epochStart(lag), rows[lag]);
       error = null;
     } catch (e) {
       error = 'Scoring failed: $e';
@@ -139,9 +198,18 @@ class SleepStager extends ChangeNotifier {
   }
 }
 
-/// Preprocess exactly like the Python reference, run the model, return the
-/// stage probabilities of the LAST epoch.
-List<double> _infer(String modelPath, Float64List signal, int epochs) {
+/// The most likely stage.
+SleepStage stageOf(List<double> p) {
+  var best = 0;
+  for (var k = 1; k < 5; k++) {
+    if (p[k] > p[best]) best = k;
+  }
+  return SleepStage.values[best];
+}
+
+/// Preprocess exactly like the Python reference, run the model and return
+/// the stage probabilities of every epoch in [signal].
+List<List<double>> inferAll(String modelPath, Float64List signal, int epochs) {
   final x = DspFilters.clipAndRobustScale(DspFilters.resample250to128(
       DspFilters.bandpass03_35(DspFilters.notch50(signal))));
   final len = epochs * 3840; // 30 s at 128 Hz
@@ -156,15 +224,20 @@ List<double> _infer(String modelPath, Float64List signal, int epochs) {
   final options = OrtRunOptions();
   final outputs = session.run(options, {'signal': tensor});
   final rows = (outputs[0]!.value as List)[0] as List; // [epochs][5] logits
-  final logits = [for (final v in rows[math.min(epochs, rows.length) - 1] as List) (v as num).toDouble()];
+  final result = [
+    for (final row in rows.take(epochs)) _softmax([for (final v in row as List) (v as num).toDouble()])
+  ];
   tensor.release();
   options.release();
   for (final o in outputs) {
     o?.release();
   }
   session.release();
+  return result;
+}
 
-  final m = logits.reduce(math.max); // softmax
+List<double> _softmax(List<double> logits) {
+  final m = logits.reduce(math.max);
   final e = [for (final l in logits) math.exp(l - m)];
   final sum = e.reduce((a, b) => a + b);
   return [for (final v in e) v / sum];
