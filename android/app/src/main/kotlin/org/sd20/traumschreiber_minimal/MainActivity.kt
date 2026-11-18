@@ -1,6 +1,10 @@
 package org.sd20.traumschreiber_minimal
 
 import android.content.Context
+import android.os.Bundle
+import android.util.Log
+import io.reactivex.exceptions.UndeliverableException
+import io.reactivex.plugins.RxJavaPlugins
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.dart.DartExecutor
@@ -29,4 +33,24 @@ class MainActivity : FlutterActivity() {
         }
 
     override fun shouldDestroyEngineWithHost(): Boolean = false
+
+    // The Bluetooth plugin (flutter_reactive_ble, built on RxJava 2) sometimes
+    // reports an error after the connection it belonged to was already closed,
+    // for example when the link drops or on Disconnect. RxJava then has nobody
+    // to hand it to and, by default, ends the whole app, and with it the
+    // recording. Seen on a Samsung tablet on Disconnect (18.11.2026). Such late
+    // errors are harmless: log them and carry on. Errors that point at a bug
+    // in the app itself are still raised.
+    override fun onCreate(savedInstanceState: Bundle?) {
+        RxJavaPlugins.setErrorHandler { e ->
+            val cause = if (e is UndeliverableException) (e.cause ?: e) else e
+            when (cause) {
+                is NullPointerException, is IllegalArgumentException, is IllegalStateException ->
+                    Thread.currentThread().uncaughtExceptionHandler
+                        ?.uncaughtException(Thread.currentThread(), cause)
+                else -> Log.w("Traumschreiber", "Ignored late Bluetooth error", cause)
+            }
+        }
+        super.onCreate(savedInstanceState)
+    }
 }

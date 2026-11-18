@@ -70,3 +70,8 @@ flutter {
 configurations.all {
     resolutionStrategy.force("com.microsoft.onnxruntime:onnxruntime-android:1.32.0")
 }
+
+dependencies {
+    // For the RxJava error handler in MainActivity; the Bluetooth plugin brings RxJava 2 anyway.
+    implementation("io.reactivex.rxjava2:rxjava:2.2.21")
+}
