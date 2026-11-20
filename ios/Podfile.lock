@@ -1,0 +1,57 @@
+PODS:
+  - Flutter (1.0.0)
+  - flutter_foreground_task (0.0.1):
+    - Flutter
+  - onnxruntime-c (1.23.0)
+  - onnxruntime-objc (1.23.0):
+    - onnxruntime-objc/Core (= 1.23.0)
+  - onnxruntime-objc/Core (1.23.0):
+    - onnxruntime-c (= 1.23.0)
+  - onnxruntime_v2 (0.0.1):
+    - Flutter
+    - onnxruntime-objc (= 1.23.0)
+  - Protobuf (3.29.5)
+  - reactive_ble_mobile (0.0.1):
+    - Flutter
+    - FlutterMacOS
+    - Protobuf (~> 3.5)
+    - SwiftProtobuf (~> 1.0)
+  - SwiftProtobuf (1.32.0)
+
+DEPENDENCIES:
+  - Flutter (from `Flutter`)
+  - flutter_foreground_task (from `.symlinks/plugins/flutter_foreground_task/ios`)
+  - onnxruntime_v2 (from `.symlinks/plugins/onnxruntime_v2/ios`)
+  - reactive_ble_mobile (from `.symlinks/plugins/reactive_ble_mobile/darwin`)
+  - SwiftProtobuf (= 1.32.0)
+
+SPEC REPOS:
+  trunk:
+    - onnxruntime-c
+    - onnxruntime-objc
+    - Protobuf
+    - SwiftProtobuf
+
+EXTERNAL SOURCES:
+  Flutter:
+    :path: Flutter
+  flutter_foreground_task:
+    :path: ".symlinks/plugins/flutter_foreground_task/ios"
+  onnxruntime_v2:
+    :path: ".symlinks/plugins/onnxruntime_v2/ios"
+  reactive_ble_mobile:
+    :path: ".symlinks/plugins/reactive_ble_mobile/darwin"
+
+SPEC CHECKSUMS:
+  Flutter: 71a624a5bc0c04062bf19101d501e466baf2fb47
+  flutter_foreground_task: a159d2c2173b33699ddb3e6c2a067045d7cebb89
+  onnxruntime-c: 3174c63a963d9abbc2bf9627e3d622819c0ed5f7
+  onnxruntime-objc: 1254d12f8160e562e7693ff17f5aa3dd17dc409e
+  onnxruntime_v2: 4efe47858784a1fd65b5fc6d71d179f1d82b029d
+  Protobuf: 164aea2ae380c3951abdc3e195220c01d17400e0
+  reactive_ble_mobile: ea97709e18fa6f0b0592909725d7ae7e1c595b64
+  SwiftProtobuf: 81e341191afbddd64aa031bd12862dccfab2f639
+
+PODFILE CHECKSUM: 457d153b2d711840c40ce67ced93b6f22638bd6f
+
+COCOAPODS: 1.16.2

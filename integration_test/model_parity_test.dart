@@ -17,6 +17,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
+import 'package:onnxruntime_v2/onnxruntime_v2.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:path_provider/path_provider.dart';
@@ -35,13 +36,15 @@ void main() {
     final bytes = await rootBundle.load('assets/models/anysleep.onnx');
     model.writeAsBytesSync(bytes.buffer.asUint8List());
 
+    OrtEnv.instance.init();
+    final session = OrtSession.fromFile(model, OrtSessionOptions());
     final windows = (expected['python'] as List).length;
     final result = <List<List<double>>>[];
     var maxDiff = 0.0, sameStage = 0, total = 0;
     for (var w = 0; w < windows; w++) {
       final n = epochs * 7500;
       final signal = Float64List.fromList(all.sublist(w * n, (w + 1) * n));
-      final rows = inferAll(model.path, signal, epochs);
+      final rows = inferAll(session, signal, epochs);
       result.add(rows);
       final py = expected['python'][w] as List;
       for (var e = 0; e < epochs; e++) {

@@ -553,8 +553,12 @@ class Traumschreiber extends ChangeNotifier {
       }
     }));
 
-    await _ble.requestConnectionPriority(
-        deviceId: id, priority: ConnectionPriority.highPerformance);
+    // Android only: iOS throws "Operation is not supported on iOS" and the
+    // connection would never start streaming.
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      await _ble.requestConnectionPriority(
+          deviceId: id, priority: ConnectionPriority.highPerformance);
+    }
     // Give the subscription a moment before the device starts sending.
     await Future.delayed(const Duration(milliseconds: 500));
     await _ble.writeCharacteristicWithResponse(_control(id), value: [_cmdStart]);

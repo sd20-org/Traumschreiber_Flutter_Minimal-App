@@ -124,10 +124,10 @@ class SleepStager extends ChangeNotifier {
     for (var e = 0; e < epochs; e++) {
       signal.setAll(e * epochSamples, _context[e]);
     }
-    // Runs on a background isolate so the UI stays smooth. The closure may
-    // only use local variables: everything it touches is copied over.
-    return Isolate.run(() => inferAll(path, signal, epochs));
+    return _worker.run(path, signal, epochs);
   }
+
+  final _ModelWorker _worker = _ModelWorker();
 
   /// Puts probabilities [p] into the hypnogram entry starting at [start].
   /// If that epoch was never scored (the first one, or one skipped while the
@@ -207,9 +207,58 @@ SleepStage stageOf(List<double> p) {
   return SleepStage.values[best];
 }
 
+/// Runs the model on one background isolate that lives as long as the app,
+/// so the UI stays smooth and the model is loaded only once.
+///
+/// Before this, every epoch started a fresh isolate with a fresh ONNX
+/// environment and session. On iPhones that memory never came back: about
+/// 20 MB per epoch, until iOS killed the app after some 25 minutes.
+class _ModelWorker {
+  Future<SendPort>? _inbox;
+
+  Future<List<List<double>>> run(String path, Float64List signal, int epochs) async {
+    _inbox ??= _spawn(path);
+    final reply = ReceivePort();
+    (await _inbox!).send([reply.sendPort, signal, epochs]);
+    final answer = await reply.first;
+    reply.close();
+    if (answer is String) throw answer;
+    return answer as List<List<double>>;
+  }
+
+  static Future<SendPort> _spawn(String path) async {
+    final hello = ReceivePort();
+    await Isolate.spawn(_workerMain, [hello.sendPort, path]);
+    final inbox = await hello.first as SendPort;
+    hello.close();
+    return inbox;
+  }
+}
+
+void _workerMain(List<Object> args) {
+  final hello = args[0] as SendPort;
+  final path = args[1] as String;
+  final inbox = ReceivePort();
+  hello.send(inbox.sendPort);
+  OrtSession? session;
+  inbox.listen((message) {
+    final m = message as List;
+    final reply = m[0] as SendPort;
+    try {
+      if (session == null) {
+        OrtEnv.instance.init();
+        session = OrtSession.fromFile(File(path), OrtSessionOptions());
+      }
+      reply.send(inferAll(session!, m[1] as Float64List, m[2] as int));
+    } catch (e) {
+      reply.send('$e');
+    }
+  });
+}
+
 /// Preprocess exactly like the Python reference, run the model and return
 /// the stage probabilities of every epoch in [signal].
-List<List<double>> inferAll(String modelPath, Float64List signal, int epochs) {
+List<List<double>> inferAll(OrtSession session, Float64List signal, int epochs) {
   final x = DspFilters.clipAndRobustScale(DspFilters.resample250to128(
       DspFilters.bandpass03_35(DspFilters.notch50(signal))));
   final len = epochs * 3840; // 30 s at 128 Hz
@@ -218,22 +267,22 @@ List<List<double>> inferAll(String modelPath, Float64List signal, int epochs) {
     input[i] = x[i];
   }
 
-  OrtEnv.instance.init();
-  final session = OrtSession.fromFile(File(modelPath), OrtSessionOptions());
   final tensor = OrtValueTensor.createTensorWithDataList(input, [1, len, 1]);
   final options = OrtRunOptions();
-  final outputs = session.run(options, {'signal': tensor});
-  final rows = (outputs[0]!.value as List)[0] as List; // [epochs][5] logits
-  final result = [
-    for (final row in rows.take(epochs)) _softmax([for (final v in row as List) (v as num).toDouble()])
-  ];
-  tensor.release();
-  options.release();
-  for (final o in outputs) {
-    o?.release();
+  try {
+    final outputs = session.run(options, {'signal': tensor});
+    final rows = (outputs[0]!.value as List)[0] as List; // [epochs][5] logits
+    final result = [
+      for (final row in rows.take(epochs)) _softmax([for (final v in row as List) (v as num).toDouble()])
+    ];
+    for (final o in outputs) {
+      o?.release();
+    }
+    return result;
+  } finally {
+    tensor.release();
+    options.release();
   }
-  session.release();
-  return result;
 }
 
 List<double> _softmax(List<double> logits) {
